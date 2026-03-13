@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TBM Fleet Manager — Barhale</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { margin: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #f3f4f6; }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; }
+    .gantt-container::-webkit-scrollbar { height: 10px; }
+    .gantt-container::-webkit-scrollbar-track { background: #e5e7eb; border-radius: 5px; }
+    .gantt-container::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; }
+    .gantt-container::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+    #map-container { height: 60vh; min-height: 350px; max-height: 600px; width: 100%; }
+    .leaflet-container { height: 100%; width: 100%; border-radius: 0.5rem; }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            barhale: '#f97316',
+            tbm600: '#10b981',
+            tbm1200: '#3b82f6',
+            tbm1500: '#f59e0b',
+            tbm1800: '#ef4444',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+    // ──────────────────────────────────────────────
+    // DATA LAYER
+    // ──────────────────────────────────────────────
+
+    const FLEET_OWNED = { 600: 4, 1200: 5, 1500: 3, 1800: 2 };
+    const TOTAL_CABINS = 8;
+
+    const TBM_COLORS = {
+      600: { bg: '#10b981', text: 'text-tbm600', label: '600mm' },
+      1200: { bg: '#3b82f6', text: 'text-tbm1200', label: '1200mm' },
+      1500: { bg: '#f59e0b', text: 'text-tbm1500', label: '1500mm' },
+      1800: { bg: '#ef4444', text: 'text-tbm1800', label: '1800mm' },
+    };
+
+    const HIRE_RATES_WEEKLY = { 600: 10200, 1200: 17850, 1500: 21400, 1800: 25100 };
+
+    const FLEET_TBMS = [
+      { id: 'TBM-600-01', label: '600 Herrenknecht #1', size: 600, base: 'Birmingham' },
+      { id: 'TBM-600-02', label: '600 Herrenknecht #2', size: 600, base: 'Bristol' },
+      { id: 'TBM-600-03', label: '600 Robbins #1', size: 600, base: 'Birmingham' },
+      { id: 'TBM-600-04', label: '600 Robbins #2', size: 600, base: 'Houston' },
+      { id: 'TBM-1200-01', label: '1200 Herrenknecht #1', size: 1200, base: 'Birmingham' },
+      { id: 'TBM-1200-02', label: '1200 Herrenknecht #2', size: 1200, base: 'Bristol' },
+      { id: 'TBM-1200-03', label: '1200 Lovat #1', size: 1200, base: 'Bristol' },
+      { id: 'TBM-1200-04', label: '1200 Lovat #2', size: 1200, base: 'Birmingham' },
+      { id: 'TBM-1200-05', label: '1200 NFM #1', size: 1200, base: 'Shanghai' },
+      { id: 'TBM-1500-01', label: '1500 Herrenknecht #1', size: 1500, base: 'Bristol' },
+      { id: 'TBM-1500-02', label: '1500 Lovat #1', size: 1500, base: 'Birmingham' },
+      { id: 'TBM-1500-03', label: '1500 NFM #1', size: 1500, base: 'Houston' },
+      { id: 'TBM-1800-01', label: '1800 Herrenknecht #1', size: 1800, base: 'Bristol' },
+      { id: 'TBM-1800-02', label: '1800 Robbins #1', size: 1800, base: 'Birmingham' },
+    ];
+
+    const FLEET_CABINS = [
+      { id: 'CAB-DIG-01', label: 'Digital Control #1', type: 'digital' },
+      { id: 'CAB-DIG-02', label: 'Digital Control #2', type: 'digital' },
+      { id: 'CAB-DIG-03', label: 'Digital Control #3', type: 'digital' },
+      { id: 'CAB-DIG-04', label: 'Digital Control #4', type: 'digital' },
+      { id: 'CAB-DIG-05', label: 'Digital Control #5', type: 'digital' },
+      { id: 'CAB-MAN-01', label: 'Manual Control #1', type: 'analogue' },
+      { id: 'CAB-MAN-02', label: 'Manual Control #2', type: 'analogue' },
+      { id: 'CAB-MAN-03', label: 'Manual Control #3', type: 'analogue' },
+    ];
+
+    const YARDS = [
+      { name: 'Birmingham (Solihull)', lat: 52.41, lng: -1.78, systems: '3 complete systems' },
+      { name: 'Bristol (Avonmouth)', lat: 51.50, lng: -2.70, systems: '4 systems + training centre' },
+      { name: 'Houston TX (Katy)', lat: 29.76, lng: -95.82, systems: '2 complete systems' },
+      { name: 'Shanghai (Pudong)', lat: 31.23, lng: 121.47, systems: '1 complete system' },
+    ];
+
+    // ── DEMO DATA — fictional projects for demonstration purposes ──
+    const PROJECTS = [
+      // Secured (100%)
+      { id: 'P2001', name: 'Stratford WTP - Outfall Main 280m', tbm_size: 1800, days: 35, start_date: '2026-05-11', end_date: '2026-06-25', likelihood: 100, secured: true, revenue_k: 740, lat: 52.19, lng: -1.71, location: 'Warwickshire' },
+      { id: 'P2002', name: 'Baytown Industrial Sewer - 200m', tbm_size: 600, days: 50, start_date: '2026-06-22', end_date: '2026-08-25', likelihood: 100, secured: true, revenue_k: 380, lat: 29.74, lng: -94.97, location: 'Houston TX, USA' },
+      { id: 'P2003', name: 'Portishead CSO Upgrade - 95m', tbm_size: 1200, days: 28, start_date: '2026-08-24', end_date: '2026-10-01', likelihood: 100, secured: true, revenue_k: 310, lat: 51.48, lng: -2.77, location: 'Somerset' },
+      { id: 'P2004', name: 'Coventry Ring Main - 75m', tbm_size: 1200, days: 22, start_date: '2026-12-14', end_date: '2027-01-14', likelihood: 100, secured: true, revenue_k: 205, lat: 52.41, lng: -1.51, location: 'West Midlands' },
+      { id: 'P2005', name: 'Severn Valley Trunk (Front 1) - 3.1km', tbm_size: 1200, days: 240, start_date: '2026-12-14', end_date: '2027-11-22', likelihood: 100, secured: true, revenue_k: 3500, lat: 52.38, lng: -2.36, location: 'Worcestershire' },
+      { id: 'P2006', name: 'Severn Valley Trunk (Front 2) - 3.1km', tbm_size: 1200, days: 240, start_date: '2026-12-14', end_date: '2027-11-22', likelihood: 100, secured: true, revenue_k: 3500, lat: 52.39, lng: -2.35, location: 'Worcestershire' },
+      { id: 'P2007', name: 'Temple Meads Utility Tunnel - 180m', tbm_size: 1500, days: 50, start_date: '2027-10-18', end_date: '2027-12-22', likelihood: 100, secured: true, revenue_k: 1580, lat: 51.45, lng: -2.58, location: 'Central Bristol' },
+      { id: 'P2008', name: 'Pudong Storm Drain Extension - 300m', tbm_size: 1200, days: 55, start_date: '2027-03-01', end_date: '2027-05-12', likelihood: 100, secured: true, revenue_k: 620, lat: 31.22, lng: 121.54, location: 'Shanghai, China' },
+      // Pipeline (varied likelihoods)
+      { id: 'P2009', name: 'Filton Auger Bore - 160m', tbm_size: 600, days: 55, start_date: '2026-03-16', end_date: '2026-05-28', likelihood: 45, secured: false, revenue_k: 195, lat: 51.51, lng: -2.57, location: 'North Bristol' },
+      { id: 'P2010', name: 'Light Rail Crossing - 220m', tbm_size: 1200, days: 28, start_date: '2026-05-04', end_date: '2026-06-10', likelihood: 25, secured: false, revenue_k: 450, lat: 52.48, lng: -1.89, location: 'Birmingham' },
+      { id: 'P2011', name: 'Thornbury SPS - 110m', tbm_size: 600, days: 38, start_date: '2026-06-15', end_date: '2026-08-05', likelihood: 60, secured: false, revenue_k: 175, lat: 51.61, lng: -2.53, location: 'South Gloucestershire' },
+      { id: 'P2012', name: 'River Avon Gas Crossing - 155m', tbm_size: 1500, days: 28, start_date: '2026-09-28', end_date: '2026-11-04', likelihood: 45, secured: false, revenue_k: 530, lat: 51.44, lng: -2.62, location: 'Bath & NE Somerset' },
+      { id: 'P2013', name: 'Tamworth Transfer Main - 140m', tbm_size: 1200, days: 28, start_date: '2026-10-19', end_date: '2026-11-25', likelihood: 60, secured: false, revenue_k: 330, lat: 52.63, lng: -1.69, location: 'Staffordshire' },
+      { id: 'P2014', name: 'Fishponds Interceptor - 165m', tbm_size: 1200, days: 28, start_date: '2026-11-09', end_date: '2026-12-16', likelihood: 70, secured: false, revenue_k: 390, lat: 51.47, lng: -2.53, location: 'East Bristol' },
+      { id: 'P2015', name: 'Tewkesbury Water Main - 130m', tbm_size: 1200, days: 22, start_date: '2027-01-04', end_date: '2027-02-03', likelihood: 35, secured: false, revenue_k: 295, lat: 51.99, lng: -2.16, location: 'Gloucestershire' },
+      { id: 'P2016', name: 'Midlands Metro Tunnel Programme - 14 drives', tbm_size: 1200, days: 320, start_date: '2027-01-04', end_date: '2028-04-14', likelihood: 40, secured: false, revenue_k: 5200, lat: 52.47, lng: -1.90, location: 'West Midlands' },
+      { id: 'P2017', name: 'Harbourside Link - 850m twin', tbm_size: 1500, days: 160, start_date: '2027-01-11', end_date: '2027-08-25', likelihood: 55, secured: false, revenue_k: 2300, lat: 51.45, lng: -2.60, location: 'Central Bristol' },
+      { id: 'P2018', name: 'Cheltenham Gas Diversion - 195m', tbm_size: 1200, days: 22, start_date: '2027-02-01', end_date: '2027-03-03', likelihood: 75, secured: false, revenue_k: 275, lat: 51.90, lng: -2.07, location: 'Gloucestershire' },
+      { id: 'P2019', name: 'Solihull District Heating - 880m', tbm_size: 1800, days: 65, start_date: '2027-02-08', end_date: '2027-05-05', likelihood: 30, secured: false, revenue_k: 1750, lat: 52.41, lng: -1.78, location: 'West Midlands' },
+      { id: 'P2020', name: 'River Trent Crossing - 270m', tbm_size: 1200, days: 32, start_date: '2027-02-08', end_date: '2027-03-28', likelihood: 60, secured: false, revenue_k: 440, lat: 52.83, lng: -1.48, location: 'Derbyshire' },
+      { id: 'P2021', name: 'Vale of Evesham Mains - 4x120m', tbm_size: 1200, days: 80, start_date: '2027-02-08', end_date: '2027-06-10', likelihood: 25, secured: false, revenue_k: 980, lat: 52.10, lng: -1.95, location: 'Worcestershire' },
+      { id: 'P2022', name: 'Galveston Storm Relief - 120m', tbm_size: 600, days: 22, start_date: '2027-03-01', end_date: '2027-03-30', likelihood: 70, secured: false, revenue_k: 145, lat: 29.30, lng: -94.79, location: 'Texas, USA' },
+      { id: 'P2023', name: 'Warwick Heat Network - 550m', tbm_size: 1800, days: 95, start_date: '2027-03-22', end_date: '2027-07-30', likelihood: 55, secured: false, revenue_k: 2600, lat: 52.28, lng: -1.59, location: 'Warwickshire' },
+      { id: 'P2024', name: 'Avon Gorge Interceptor PH1 - 7km', tbm_size: 1800, days: 310, start_date: '2027-04-05', end_date: '2028-06-28', likelihood: 40, secured: false, revenue_k: 13500, lat: 51.46, lng: -2.63, location: 'North Somerset' },
+      { id: 'P2025', name: 'Bromsgrove WRC Transfer - 185m', tbm_size: 1200, days: 180, start_date: '2027-05-17', end_date: '2028-01-20', likelihood: 60, secured: false, revenue_k: 1950, lat: 52.33, lng: -2.06, location: 'Worcestershire' },
+      { id: 'P2026', name: 'Clifton District Heating - 380m', tbm_size: 1500, days: 48, start_date: '2027-07-19', end_date: '2027-09-22', likelihood: 25, secured: false, revenue_k: 810, lat: 51.46, lng: -2.62, location: 'West Bristol' },
+      { id: 'P2027', name: 'Vale Rising Mains - 2x165m', tbm_size: 1200, days: 65, start_date: '2027-07-19', end_date: '2027-10-15', likelihood: 15, secured: false, revenue_k: 720, lat: 52.08, lng: -1.98, location: 'Worcestershire' },
+      { id: 'P2028', name: 'Forth Clyde Outfall Crossing - 320m', tbm_size: 1800, days: 32, start_date: '2027-12-20', end_date: '2028-02-01', likelihood: 15, secured: false, revenue_k: 920, lat: 55.97, lng: -3.18, location: 'Edinburgh' },
+      // Later pipeline
+      { id: 'P2029', name: 'Bristol Western Aqueduct - 2.8km', tbm_size: 1800, days: 310, start_date: '2028-02-14', end_date: '2029-05-01', likelihood: 15, secured: false, revenue_k: 10200, lat: 51.43, lng: -2.75, location: 'North Somerset' },
+      { id: 'P2030', name: 'Bournville Reservoir Link - 1500m', tbm_size: 1800, days: 130, start_date: '2028-03-20', end_date: '2028-09-25', likelihood: 25, secured: false, revenue_k: 3900, lat: 52.42, lng: -1.93, location: 'South Birmingham' },
+      { id: 'P2031', name: 'Digbeth Sewer - 140m', tbm_size: 1800, days: 38, start_date: '2028-05-08', end_date: '2028-06-25', likelihood: 45, secured: false, revenue_k: 1020, lat: 52.47, lng: -1.88, location: 'Central Birmingham' },
+      { id: 'P2032', name: 'Keynsham Flood Relief - 270m', tbm_size: 1800, days: 330, start_date: '2029-03-26', end_date: '2030-06-18', likelihood: 35, secured: false, revenue_k: 8800, lat: 51.41, lng: -2.50, location: 'Bath & NE Somerset' },
+      { id: 'P2033', name: 'Avon Gorge Interceptor PH2 - 11km', tbm_size: 1800, days: 870, start_date: '2029-05-21', end_date: '2032-11-02', likelihood: 40, secured: false, revenue_k: 30000, lat: 51.46, lng: -2.65, location: 'North Somerset' },
+    ];
+
+    // ──────────────────────────────────────────────
+    // HELPER FUNCTIONS
+    // ──────────────────────────────────────────────
+
+    function parseDate(s) { return new Date(s + 'T00:00:00'); }
+
+    function monthsBetween(start, end) {
+      const months = [];
+      const d = new Date(start.getFullYear(), start.getMonth(), 1);
+      const endDate = new Date(end.getFullYear(), end.getMonth(), 1);
+      while (d <= endDate) {
+        months.push(new Date(d));
+        d.setMonth(d.getMonth() + 1);
+      }
+      return months;
+    }
+
+    const TIMELINE_START = new Date(2026, 3, 1); // Apr 2026
+    const TIMELINE_END = new Date(2031, 0, 1);   // Jan 2031
+    const ALL_MONTHS = monthsBetween(TIMELINE_START, TIMELINE_END);
+
+    function isActiveInMonth(project, month) {
+      const ps = parseDate(project.start_date);
+      const pe = parseDate(project.end_date);
+      const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+      return ps <= monthEnd && pe >= month;
+    }
+
+    function formatMonth(d) {
+      return d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+    }
+
+    function formatMonthLong(d) {
+      return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    }
+
+    function formatDate(s) {
+      return parseDate(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function getDemandForMonth(projects, month, likelihoodFilter) {
+      const active = projects.filter(p => p.likelihood >= likelihoodFilter && isActiveInMonth(p, month));
+      const demand = { 600: 0, 1200: 0, 1500: 0, 1800: 0 };
+      active.forEach(p => { demand[p.tbm_size]++; });
+      return { demand, totalActive: active.length };
+    }
+
+    function getAlerts(projects, likelihoodFilter) {
+      const alerts = [];
+      const now = new Date();
+      const monthsAhead = monthsBetween(now, new Date(now.getFullYear() + 1, now.getMonth(), 1));
+      monthsAhead.forEach(month => {
+        const { demand, totalActive } = getDemandForMonth(projects, month, likelihoodFilter);
+        const mLabel = formatMonthLong(month);
+        [600, 1200, 1500, 1800].forEach(size => {
+          if (demand[size] > FLEET_OWNED[size]) {
+            const shortfall = demand[size] - FLEET_OWNED[size];
+            alerts.push({ month: mLabel, type: 'tbm', size, need: demand[size], own: FLEET_OWNED[size], shortfall, severity: 'red' });
+          }
+        });
+        if (totalActive > TOTAL_CABINS) {
+          alerts.push({ month: mLabel, type: 'cabin', need: totalActive, own: TOTAL_CABINS, shortfall: totalActive - TOTAL_CABINS, severity: 'red' });
+        }
+      });
+      return alerts;
+    }
+
+    // Auto-allocation for resource matrix
+    function allocateResources(projects, likelihoodFilter) {
+      const filtered = projects
+        .filter(p => p.likelihood >= likelihoodFilter)
+        .sort((a, b) => {
+          if (a.secured !== b.secured) return a.secured ? -1 : 1;
+          return parseDate(a.start_date) - parseDate(b.start_date);
+        });
+
+      const BUFFER_DAYS = 14;
+      const tbmAssignments = {}; // tbmId -> [{projectId, start, end}]
+      const cabinAssignments = {};
+      FLEET_TBMS.forEach(t => { tbmAssignments[t.id] = []; });
+      FLEET_CABINS.forEach(c => { cabinAssignments[c.id] = []; });
+
+      const projectAssignment = {}; // projectId -> {tbmId, cabinId} or {hire:true}
+
+      filtered.forEach(proj => {
+        const ps = parseDate(proj.start_date);
+        const pe = parseDate(proj.end_date);
+        const bufferedStart = new Date(ps.getTime() - BUFFER_DAYS * 86400000);
+        const bufferedEnd = new Date(pe.getTime() + BUFFER_DAYS * 86400000);
+
+        // Find TBM
+        let assignedTbm = null;
+        const candidates = FLEET_TBMS.filter(t => t.size === proj.tbm_size);
+
+        // Overseas projects prefer locally-based TBM
+        if (proj.location && (proj.location.includes('USA') || proj.location.includes('Houston'))) {
+          const localTbm = candidates.find(t => t.base === 'Houston');
+          if (localTbm) {
+            const busy = tbmAssignments[localTbm.id].some(a =>
+              !(bufferedEnd < a.start || bufferedStart > a.end)
+            );
+            if (!busy) assignedTbm = localTbm;
+          }
+        } else if (proj.location && (proj.location.includes('China') || proj.location.includes('Shanghai'))) {
+          const localTbm = candidates.find(t => t.base === 'Shanghai');
+          if (localTbm) {
+            const busy = tbmAssignments[localTbm.id].some(a =>
+              !(bufferedEnd < a.start || bufferedStart > a.end)
+            );
+            if (!busy) assignedTbm = localTbm;
+          }
+        }
+
+        if (!assignedTbm) {
+          for (const tbm of candidates) {
+            const busy = tbmAssignments[tbm.id].some(a =>
+              !(bufferedEnd < a.start || bufferedStart > a.end)
+            );
+            if (!busy) { assignedTbm = tbm; break; }
+          }
+        }
+
+        // Find Cabin (prefer digital)
+        let assignedCabin = null;
+        const cabinOrder = [...FLEET_CABINS].sort((a, b) => {
+          if (a.type === 'digital' && b.type !== 'digital') return -1;
+          if (a.type !== 'digital' && b.type === 'digital') return 1;
+          return 0;
+        });
+        for (const cab of cabinOrder) {
+          const busy = cabinAssignments[cab.id].some(a =>
+            !(bufferedEnd < a.start || bufferedStart > a.end)
+          );
+          if (!busy) { assignedCabin = cab; break; }
+        }
+
+        if (assignedTbm) {
+          tbmAssignments[assignedTbm.id].push({ projectId: proj.id, start: ps, end: pe });
+        }
+        if (assignedCabin) {
+          cabinAssignments[assignedCabin.id].push({ projectId: proj.id, start: ps, end: pe });
+        }
+
+        projectAssignment[proj.id] = {
+          tbmId: assignedTbm ? assignedTbm.id : null,
+          cabinId: assignedCabin ? assignedCabin.id : null,
+          hireTbm: !assignedTbm,
+          hireCabin: !assignedCabin,
+        };
+      });
+
+      return { tbmAssignments, cabinAssignments, projectAssignment };
+    }
+
+    // ──────────────────────────────────────────────
+    // COMPONENTS
+    // ──────────────────────────────────────────────
+
+    // ── Header ──
+    function Header({ activeTab, setActiveTab }) {
+      const tabs = [
+        { key: 'Dashboard', icon: '▣', short: 'Dash' },
+        { key: 'Timeline', icon: '▤', short: 'Timeline' },
+        { key: 'Map', icon: '◎', short: 'Map' },
+        { key: 'Resource Matrix', icon: '▦', short: 'Matrix' },
+      ];
+      return (
+        <header className="bg-gray-900 text-white shadow-lg">
+          <div className="max-w-[1600px] mx-auto px-4">
+            <div className="flex items-center justify-between h-14">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-8 h-8 bg-barhale rounded flex items-center justify-center font-bold text-sm flex-shrink-0">B</div>
+                <div className="hidden sm:block">
+                  <h1 className="text-base font-bold leading-tight">TBM Fleet Manager</h1>
+                  <p className="text-[10px] text-gray-400 leading-tight">Barhale Tunnelling Division</p>
+                </div>
+                <h1 className="sm:hidden text-sm font-bold">TBM Fleet</h1>
+              </div>
+              <nav className="flex gap-0.5 sm:gap-1">
+                {tabs.map(tab => (
+                  <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+                    className={`px-2 sm:px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${
+                      activeTab === tab.key ? 'bg-barhale text-white' : 'text-gray-300 hover:bg-gray-700'
+                    }`}>
+                    <span className="hidden sm:inline">{tab.key}</span>
+                    <span className="sm:hidden">{tab.short}</span>
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    // ── Filter Bar ──
+    function FilterBar({ likelihoodFilter, setLikelihoodFilter }) {
+      const presets = [
+        { label: 'All Pipeline', value: 0 },
+        { label: 'High Confidence (>=50%)', value: 50 },
+        { label: 'Secured Only (100%)', value: 100 },
+      ];
+      return (
+        <div className="bg-white border-b border-gray-200 shadow-sm">
+          <div className="max-w-[1600px] mx-auto px-3 sm:px-4 py-2 space-y-2 sm:space-y-0">
+            <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Likelihood</span>
+              <input type="range" min="0" max="100" value={likelihoodFilter}
+                onChange={e => setLikelihoodFilter(Number(e.target.value))}
+                className="w-28 sm:w-40 accent-barhale" />
+              <span className="mono text-sm font-bold text-gray-700 w-10">{likelihoodFilter}%</span>
+              <div className="flex gap-1">
+                {presets.map(p => (
+                  <button key={p.value} onClick={() => setLikelihoodFilter(p.value)}
+                    className={`px-2 py-1 text-[10px] sm:text-xs rounded border transition-colors ${
+                      likelihoodFilter === p.value
+                        ? 'bg-barhale text-white border-barhale'
+                        : 'bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100'
+                    }`}>
+                    <span className="hidden sm:inline">{p.label}</span>
+                    <span className="sm:hidden">{p.value === 0 ? 'All' : p.value === 50 ? '>=50%' : '100%'}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 sm:gap-3 text-xs sm:ml-auto">
+                {[600,1200,1500,1800].map(s => (
+                  <span key={s} className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-sm inline-block" style={{ backgroundColor: TBM_COLORS[s].bg }}></span>
+                    <span className="hidden sm:inline">{TBM_COLORS[s].label}</span>
+                    <span className="sm:hidden text-[10px]">{s}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Dashboard Date Picker ──
+    function DashboardDatePicker({ viewDate, setViewDate }) {
+      // Slider: index into ALL_MONTHS (+ weekly granularity)
+      const TOTAL_WEEKS = Math.round((TIMELINE_END - TIMELINE_START) / (7 * 86400000));
+      const weekIndex = Math.max(0, Math.round((viewDate - TIMELINE_START) / (7 * 86400000)));
+
+      function onSliderChange(e) {
+        const wi = Number(e.target.value);
+        const d = new Date(TIMELINE_START.getTime() + wi * 7 * 86400000);
+        setViewDate(d);
+      }
+
+      // Quick month buttons
+      const quickMonths = [
+        { label: 'Today', date: new Date() },
+        ...ALL_MONTHS.filter((m, i) => i % 3 === 0).slice(0, 12).map(m => ({
+          label: m.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+          date: m,
+        })),
+      ];
+
+      // Format the selected date nicely
+      const weekStart = new Date(viewDate);
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // Monday
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const weekLabel = `${weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — ${weekEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+
+      return (
+        <div className="bg-white rounded-lg border-2 border-barhale/30 p-3 space-y-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Viewing:</span>
+            <span className="mono text-sm font-bold text-barhale">{viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</span>
+            <span className="text-xs text-gray-400">({weekLabel})</span>
+            <input type="date" value={viewDate.toISOString().slice(0, 10)}
+              min="2026-04-01" max="2031-01-01"
+              onChange={e => { if (e.target.value) setViewDate(new Date(e.target.value + 'T00:00:00')); }}
+              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-barhale/50" />
+            <button onClick={() => setViewDate(new Date())}
+              className="ml-1 px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded font-medium text-gray-600 transition-colors">
+              Today
+            </button>
+          </div>
+          {/* Week slider */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-400 w-16">Apr 2026</span>
+            <input type="range" min="0" max={TOTAL_WEEKS} value={weekIndex}
+              onChange={onSliderChange}
+              className="flex-1 accent-barhale h-2" />
+            <span className="text-[10px] text-gray-400 w-16 text-right">Jan 2031</span>
+          </div>
+          {/* Quick-jump month chips */}
+          <div className="flex gap-1 flex-wrap">
+            {quickMonths.map((q, i) => {
+              const isSelected = q.date.getFullYear() === viewDate.getFullYear() && q.date.getMonth() === viewDate.getMonth();
+              return (
+                <button key={i} onClick={() => setViewDate(new Date(q.date))}
+                  className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                    isSelected
+                      ? 'bg-barhale text-white border-barhale'
+                      : i === 0 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                      : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                  }`}>
+                  {q.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Dashboard Tab ──
+    function DashboardTab({ projects, likelihoodFilter }) {
+      const filtered = projects.filter(p => p.likelihood >= likelihoodFilter);
+      const [viewDate, setViewDate] = useState(() => new Date());
+      const viewMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+      const { demand: currentDemand, totalActive } = getDemandForMonth(filtered, viewMonth, 0);
+      const alerts = getAlerts(projects, likelihoodFilter);
+
+      // "Active" = projects whose date range spans the selected viewDate
+      const active = filtered.filter(p => {
+        const s = parseDate(p.start_date);
+        const e = parseDate(p.end_date);
+        return s <= viewDate && e >= viewDate;
+      });
+
+      // "Upcoming" = starts within 30 days AFTER viewDate
+      const upcoming = filtered.filter(p => {
+        const s = parseDate(p.start_date);
+        const diff = (s - viewDate) / 86400000;
+        return diff > 0 && diff <= 30;
+      });
+
+      // "Completed" = ended before viewDate
+      const completed = filtered.filter(p => parseDate(p.end_date) < viewDate);
+
+      // "Not yet started" = starts after viewDate
+      const future = filtered.filter(p => parseDate(p.start_date) > viewDate);
+
+      return (
+        <div className="max-w-[1600px] mx-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
+          {/* Date Picker */}
+          <DashboardDatePicker viewDate={viewDate} setViewDate={setViewDate} />
+
+          {/* Fleet Status Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+            {[600, 1200, 1500, 1800].map(size => {
+              const inUse = currentDemand[size] || 0;
+              const owned = FLEET_OWNED[size];
+              const over = inUse > owned;
+              return (
+                <div key={size} className={`bg-white rounded-lg border-2 p-3 sm:p-4 ${over ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}>
+                  <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                    <span className="w-3 h-3 sm:w-4 sm:h-4 rounded" style={{ backgroundColor: TBM_COLORS[size].bg }}></span>
+                    <span className="font-bold text-xs sm:text-sm">{TBM_COLORS[size].label} TBM</span>
+                  </div>
+                  <div className="mono text-xl sm:text-2xl font-bold">{inUse} <span className="text-gray-400 text-sm sm:text-base">/ {owned}</span></div>
+                  <div className={`text-xs mt-1 ${over ? 'text-red-600 font-bold' : 'text-green-600'}`}>
+                    {over ? `OVER CAPACITY (+${inUse - owned})` : inUse === owned ? 'AT CAPACITY' : `${owned - inUse} available`}
+                  </div>
+                </div>
+              );
+            })}
+            <div className={`bg-white rounded-lg border-2 p-3 sm:p-4 ${totalActive > TOTAL_CABINS ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                <span className="w-3 h-3 sm:w-4 sm:h-4 rounded bg-purple-500"></span>
+                <span className="font-bold text-xs sm:text-sm">Control Cabins</span>
+              </div>
+              <div className="mono text-xl sm:text-2xl font-bold">{totalActive} <span className="text-gray-400 text-sm sm:text-base">/ {TOTAL_CABINS}</span></div>
+              <div className={`text-xs mt-1 ${totalActive > TOTAL_CABINS ? 'text-red-600 font-bold' : 'text-green-600'}`}>
+                {totalActive > TOTAL_CABINS ? `OVER CAPACITY (+${totalActive - TOTAL_CABINS})` : `${TOTAL_CABINS - totalActive} available`}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+            {/* Key Metrics */}
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-3">
+                Snapshot: {viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+              </h3>
+              <div className="space-y-3">
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Live Projects</span><span className="mono font-bold text-barhale">{active.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Starting within 30 days</span><span className="mono font-bold">{upcoming.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Not yet started</span><span className="mono font-bold text-blue-600">{future.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Completed by this date</span><span className="mono font-bold text-gray-400">{completed.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Total Pipeline</span><span className="mono font-bold">{filtered.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Secured</span><span className="mono font-bold">{filtered.filter(p => p.secured).length}</span></div>
+              </div>
+            </div>
+
+            {/* Alerts Panel */}
+            <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-4">
+              <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-3">
+                Capacity Alerts (Next 12 Months)
+                {alerts.length > 0 && <span className="ml-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">{alerts.length}</span>}
+              </h3>
+              {alerts.length === 0 ? (
+                <div className="text-green-600 text-sm py-4 text-center">No capacity issues detected</div>
+              ) : (
+                <div className="space-y-1 max-h-60 overflow-y-auto">
+                  {alerts.map((a, i) => (
+                    <div key={i} className="flex items-center gap-2 bg-red-50 border border-red-200 rounded px-3 py-1.5 text-sm">
+                      <span className="text-red-500 font-bold text-xs">!</span>
+                      <span className="font-medium text-gray-700">{a.month}:</span>
+                      {a.type === 'tbm' ? (
+                        <>
+                          <span className="w-3 h-3 rounded-sm inline-block" style={{ backgroundColor: TBM_COLORS[a.size].bg }}></span>
+                          <span>{TBM_COLORS[a.size].label}</span>
+                          <span className="text-gray-500">—</span>
+                          <span className="mono">need {a.need}, own {a.own}</span>
+                          <span className="text-red-600 font-bold ml-auto">hire {a.shortfall}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-3 h-3 rounded-sm inline-block bg-purple-500"></span>
+                          <span>Cabins</span>
+                          <span className="text-gray-500">—</span>
+                          <span className="mono">need {a.need}, have {a.own}</span>
+                          <span className="text-red-600 font-bold ml-auto">hire {a.shortfall}</span>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Active Projects Table */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-3">
+              Projects Overview
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                ({active.length} live, {upcoming.length} upcoming, {completed.length} completed at selected date)
+              </span>
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left">
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500">ID</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500">Project</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500">TBM</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500 hidden sm:table-cell">Start</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500 hidden sm:table-cell">End</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500 hidden md:table-cell">Days</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500">Likelihood</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500">Status</th>
+                    <th className="py-2 px-2 text-xs font-semibold text-gray-500 hidden md:table-cell">Location</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.sort((a, b) => parseDate(a.start_date) - parseDate(b.start_date)).map(p => {
+                    const ps = parseDate(p.start_date);
+                    const pe = parseDate(p.end_date);
+                    const isLive = ps <= viewDate && pe >= viewDate;
+                    const isDone = pe < viewDate;
+                    const statusLabel = isLive ? 'LIVE' : isDone ? 'Completed' : 'Upcoming';
+                    const statusClass = isLive ? 'bg-green-100 text-green-700' : isDone ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600';
+                    return (
+                    <tr key={p.id} className={`border-b border-gray-100 hover:bg-gray-50 ${isDone ? 'opacity-50' : ''}`}>
+                      <td className="py-1.5 px-2 mono text-xs">{p.id}</td>
+                      <td className="py-1.5 px-2 text-xs font-medium max-w-[250px] truncate">{p.name}</td>
+                      <td className="py-1.5 px-2">
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TBM_COLORS[p.tbm_size].bg }}></span>
+                          {p.tbm_size}mm
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2 mono text-xs hidden sm:table-cell">{formatDate(p.start_date)}</td>
+                      <td className="py-1.5 px-2 mono text-xs hidden sm:table-cell">{formatDate(p.end_date)}</td>
+                      <td className="py-1.5 px-2 mono text-xs hidden md:table-cell">{p.days}</td>
+                      <td className="py-1.5 px-2">
+                        <span className={`mono text-xs font-bold px-1.5 py-0.5 rounded ${
+                          p.likelihood === 100 ? 'bg-green-100 text-green-700' :
+                          p.likelihood >= 50 ? 'bg-amber-100 text-amber-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{p.likelihood}%</span>
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${statusClass}`}>{statusLabel}</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-xs text-gray-500 hidden md:table-cell">{p.location}</td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Timeline/Gantt Tab ──
+    function TimelineTab({ projects, likelihoodFilter }) {
+      const filtered = projects
+        .filter(p => p.likelihood >= likelihoodFilter)
+        .sort((a, b) => a.tbm_size === b.tbm_size ? parseDate(a.start_date) - parseDate(b.start_date) : a.tbm_size - b.tbm_size);
+
+      const MONTH_WIDTH = 80;
+      const ROW_HEIGHT = 28;
+      const LABEL_WIDTH = 280;
+      const UTIL_HEIGHT = 60;
+      const totalWidth = ALL_MONTHS.length * MONTH_WIDTH;
+      const [tooltip, setTooltip] = useState(null);
+      const containerRef = useRef(null);
+
+      function getBarStyle(project) {
+        const ps = parseDate(project.start_date);
+        const pe = parseDate(project.end_date);
+        const startOffset = (ps - TIMELINE_START) / (1000 * 60 * 60 * 24 * 30.44);
+        const duration = (pe - ps) / (1000 * 60 * 60 * 24 * 30.44);
+        return {
+          left: LABEL_WIDTH + startOffset * MONTH_WIDTH,
+          width: Math.max(duration * MONTH_WIDTH, 8),
+        };
+      }
+
+      return (
+        <div className="max-w-[1600px] mx-auto p-4">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="gantt-container overflow-x-auto overflow-y-auto" ref={containerRef} style={{ maxHeight: 'calc(100vh - 200px)' }}>
+              <div style={{ width: LABEL_WIDTH + totalWidth, minWidth: '100%' }}>
+                {/* Resource Utilisation Strip */}
+                <div className="sticky top-0 z-20 bg-gray-50 border-b-2 border-gray-300" style={{ height: UTIL_HEIGHT + 30 }}>
+                  <div className="flex" style={{ height: 30 }}>
+                    <div style={{ width: LABEL_WIDTH, minWidth: LABEL_WIDTH }} className="bg-gray-100 border-r border-gray-300 px-2 flex items-center">
+                      <span className="text-xs font-bold text-gray-500">UTILISATION</span>
+                    </div>
+                    <div className="flex relative">
+                      {ALL_MONTHS.map((m, i) => (
+                        <div key={i} style={{ width: MONTH_WIDTH }} className={`text-center text-[10px] py-1 border-r border-gray-200 ${m.getMonth() === 0 ? 'bg-gray-200 font-bold' : ''}`}>
+                          {m.getMonth() === 0 ? m.getFullYear() : formatMonth(m)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex" style={{ height: UTIL_HEIGHT }}>
+                    <div style={{ width: LABEL_WIDTH, minWidth: LABEL_WIDTH }} className="bg-gray-100 border-r border-gray-300"></div>
+                    <div className="flex">
+                      {ALL_MONTHS.map((m, mi) => {
+                        const { demand } = getDemandForMonth(filtered, m, 0);
+                        const maxNeeded = Math.max(...[600,1200,1500,1800].map(s => demand[s]), 1);
+                        const maxOwned = Math.max(...Object.values(FLEET_OWNED));
+                        const scale = UTIL_HEIGHT / Math.max(maxOwned + 1, maxNeeded + 1);
+                        let yOffset = UTIL_HEIGHT;
+                        const hasOvercap = [600,1200,1500,1800].some(s => demand[s] > FLEET_OWNED[s]);
+                        return (
+                          <div key={mi} style={{ width: MONTH_WIDTH, height: UTIL_HEIGHT }}
+                            className={`border-r border-gray-200 relative ${hasOvercap ? 'bg-red-50' : ''}`}>
+                            {[600, 1200, 1500, 1800].map(size => {
+                              const h = demand[size] * scale;
+                              yOffset -= h;
+                              const over = demand[size] > FLEET_OWNED[size];
+                              return demand[size] > 0 ? (
+                                <div key={size} title={`${TBM_COLORS[size].label}: ${demand[size]}/${FLEET_OWNED[size]}`}
+                                  style={{
+                                    position: 'absolute', bottom: UTIL_HEIGHT - yOffset - h,
+                                    left: 2, right: 2, height: Math.max(h, 2),
+                                    backgroundColor: TBM_COLORS[size].bg,
+                                    opacity: over ? 1 : 0.7,
+                                    borderRadius: 2,
+                                  }}>
+                                  {over && <div className="absolute inset-0 border-2 border-red-600 rounded-sm animate-pulse" />}
+                                </div>
+                              ) : null;
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Gantt Rows */}
+                {filtered.map((project, idx) => {
+                  const bar = getBarStyle(project);
+                  const color = TBM_COLORS[project.tbm_size].bg;
+                  return (
+                    <div key={project.id} className={`flex relative ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}
+                      style={{ height: ROW_HEIGHT }}>
+                      <div style={{ width: LABEL_WIDTH, minWidth: LABEL_WIDTH }}
+                        className="border-r border-gray-200 px-2 flex items-center gap-2 text-xs truncate">
+                        <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }}></span>
+                        <span className="truncate font-medium">{project.name}</span>
+                        <span className={`mono text-[10px] ml-auto flex-shrink-0 px-1 rounded ${
+                          project.likelihood === 100 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}>{project.likelihood}%</span>
+                      </div>
+                      <div className="relative flex-1" style={{ minWidth: totalWidth }}>
+                        {/* Month grid lines */}
+                        {ALL_MONTHS.map((m, i) => (
+                          <div key={i} className="absolute top-0 bottom-0 border-r border-gray-100"
+                            style={{ left: i * MONTH_WIDTH, width: MONTH_WIDTH }} />
+                        ))}
+                        {/* Bar */}
+                        <div
+                          className="absolute top-1 cursor-pointer transition-all hover:brightness-110"
+                          style={{
+                            left: bar.left - LABEL_WIDTH,
+                            width: bar.width,
+                            height: ROW_HEIGHT - 8,
+                            backgroundColor: color,
+                            opacity: project.secured ? 1 : 0.45,
+                            borderRadius: 3,
+                            border: project.secured ? 'none' : `2px dashed ${color}`,
+                          }}
+                          onMouseEnter={e => setTooltip({
+                            x: e.clientX, y: e.clientY, project
+                          })}
+                          onMouseLeave={() => setTooltip(null)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Tooltip */}
+          {tooltip && (
+            <div className="fixed z-50 bg-gray-900 text-white rounded-lg shadow-xl p-3 text-xs pointer-events-none"
+              style={{ left: tooltip.x + 12, top: tooltip.y - 10 }}>
+              <div className="font-bold mb-1">{tooltip.project.name}</div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TBM_COLORS[tooltip.project.tbm_size].bg }}></span>
+                {tooltip.project.tbm_size}mm TBM
+              </div>
+              <div>{formatDate(tooltip.project.start_date)} — {formatDate(tooltip.project.end_date)}</div>
+              <div>{tooltip.project.days} days | {tooltip.project.likelihood}% likelihood</div>
+              <div className="text-gray-400">{tooltip.project.location}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Map Date Picker (compact inline version) ──
+    function MapDatePicker({ viewDate, setViewDate }) {
+      const TOTAL_WEEKS = Math.round((TIMELINE_END - TIMELINE_START) / (7 * 86400000));
+      const weekIndex = Math.max(0, Math.round((viewDate - TIMELINE_START) / (7 * 86400000)));
+
+      function onSliderChange(e) {
+        const wi = Number(e.target.value);
+        setViewDate(new Date(TIMELINE_START.getTime() + wi * 7 * 86400000));
+      }
+
+      const quickMonths = [
+        { label: 'Today', date: new Date() },
+        ...ALL_MONTHS.filter((m, i) => i % 3 === 0).slice(0, 12).map(m => ({
+          label: m.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+          date: m,
+        })),
+      ];
+
+      return (
+        <div className="p-3 border-b border-gray-200 space-y-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Viewing:</span>
+            <span className="mono text-sm font-bold text-barhale">{viewDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+            <input type="date" value={viewDate.toISOString().slice(0, 10)}
+              min="2026-04-01" max="2031-01-01"
+              onChange={e => { if (e.target.value) setViewDate(new Date(e.target.value + 'T00:00:00')); }}
+              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-barhale/50" />
+            <button onClick={() => setViewDate(new Date())}
+              className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded font-medium text-gray-600 transition-colors">
+              Today
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-400 w-16">Apr 2026</span>
+            <input type="range" min="0" max={TOTAL_WEEKS} value={weekIndex}
+              onChange={onSliderChange}
+              className="flex-1 accent-barhale h-2" />
+            <span className="text-[10px] text-gray-400 w-16 text-right">Jan 2031</span>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {quickMonths.map((q, i) => {
+              const isSelected = q.date.getFullYear() === viewDate.getFullYear() && q.date.getMonth() === viewDate.getMonth();
+              return (
+                <button key={i} onClick={() => setViewDate(new Date(q.date))}
+                  className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                    isSelected ? 'bg-barhale text-white border-barhale'
+                    : i === 0 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                  }`}>
+                  {q.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Map Tab ──
+    function MapTab({ projects, likelihoodFilter }) {
+      const mapRef = useRef(null);
+      const mapInstance = useRef(null);
+      const markersRef = useRef([]);
+      const [viewDate, setViewDate] = useState(() => new Date());
+
+      const filtered = projects.filter(p => p.likelihood >= likelihoodFilter);
+
+      useEffect(() => {
+        if (!mapRef.current || mapInstance.current) return;
+        const map = L.map(mapRef.current).setView([53.5, -1.5], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        mapInstance.current = map;
+
+        // Yard markers
+        YARDS.forEach(yard => {
+          L.marker([yard.lat, yard.lng], {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="width:20px;height:20px;background:#6b7280;border:3px solid #374151;transform:rotate(45deg);border-radius:3px;"></div>`,
+              iconSize: [20, 20],
+              iconAnchor: [10, 10],
+            })
+          }).addTo(map).bindPopup(`<b>${yard.name}</b><br/>${yard.systems}`);
+        });
+
+        return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; } };
+      }, []);
+
+      useEffect(() => {
+        if (!mapInstance.current) return;
+        markersRef.current.forEach(m => mapInstance.current.removeLayer(m));
+        markersRef.current = [];
+
+        // Count active/upcoming/completed at viewDate
+        let activeCount = 0, upcomingCount = 0, completedCount = 0;
+
+        filtered.forEach(p => {
+          const ps = parseDate(p.start_date);
+          const pe = parseDate(p.end_date);
+          const isActive = ps <= viewDate && pe >= viewDate;
+          const isDone = pe < viewDate;
+          const isUpcoming = ps > viewDate && (ps - viewDate) / 86400000 <= 90;
+          if (isActive) activeCount++;
+          else if (isDone) completedCount++;
+          else if (isUpcoming) upcomingCount++;
+
+          const status = isActive ? 'LIVE' : isDone ? 'Completed' : isUpcoming ? 'Upcoming' : 'Pipeline';
+          const statusColor = isActive ? '#16a34a' : isDone ? '#9ca3af' : isUpcoming ? '#2563eb' : '#6b7280';
+
+          const color = TBM_COLORS[p.tbm_size].bg;
+          const marker = L.circleMarker([p.lat, p.lng], {
+            radius: isActive ? 10 : isDone ? 5 : 7,
+            color: color,
+            fillColor: color,
+            fillOpacity: isDone ? 0.15 : p.secured ? 0.85 : 0.4,
+            weight: isActive ? 3 : 1.5,
+            opacity: isDone ? 0.3 : 1,
+          }).addTo(mapInstance.current);
+
+          marker.bindPopup(`
+            <div style="min-width:200px">
+              <b>${p.name}</b><br/>
+              <span style="color:${color}">${p.tbm_size}mm TBM</span> |
+              <span style="color:${statusColor};font-weight:bold"> ${status}</span><br/>
+              ${formatDate(p.start_date)} — ${formatDate(p.end_date)}<br/>
+              ${p.days} days | ${p.likelihood}% likelihood<br/>
+              <small>${p.location}</small>
+            </div>
+          `);
+          markersRef.current.push(marker);
+        });
+      }, [filtered, viewDate]);
+
+      return (
+        <div className="max-w-[1600px] mx-auto p-4">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {/* Date picker */}
+            <MapDatePicker viewDate={viewDate} setViewDate={setViewDate} />
+            {/* Legend */}
+            <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-4 text-xs">
+              <span className="font-bold text-gray-500">LEGEND:</span>
+              {[600,1200,1500,1800].map(s => (
+                <span key={s} className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: TBM_COLORS[s].bg }}></span>
+                  {TBM_COLORS[s].label}
+                </span>
+              ))}
+              <span className="flex items-center gap-1 ml-4">
+                <span className="w-4 h-4 bg-gray-500 border-2 border-gray-700 inline-block" style={{ transform: 'rotate(45deg)', borderRadius: 2, width: 12, height: 12 }}></span>
+                Yard
+              </span>
+              <span className="ml-4 text-gray-400">Large solid = live | Small faded = completed | Medium = upcoming/pipeline</span>
+            </div>
+            <div id="map-container" ref={mapRef}></div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Resource Matrix Tab ──
+    function ResourceMatrixTab({ projects, likelihoodFilter }) {
+      const { tbmAssignments, cabinAssignments, projectAssignment } = useMemo(
+        () => allocateResources(projects, likelihoodFilter),
+        [projects, likelihoodFilter]
+      );
+
+      const filtered = projects.filter(p => p.likelihood >= likelihoodFilter);
+      const months = ALL_MONTHS.slice(0, 36); // Show 3 years
+      const CELL_W = 90;
+
+      function getProjectForCell(assignments, resourceId, month) {
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+        const entry = assignments[resourceId]?.find(a => a.start <= monthEnd && a.end >= month);
+        if (entry) {
+          return projects.find(p => p.id === entry.projectId);
+        }
+        return null;
+      }
+
+      // Find hire-in needs per month
+      function getHireNeeds(month) {
+        const needs = [];
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+        filtered.forEach(p => {
+          const ps = parseDate(p.start_date);
+          const pe = parseDate(p.end_date);
+          if (ps <= monthEnd && pe >= month) {
+            const assignment = projectAssignment[p.id];
+            if (assignment && assignment.hireTbm) {
+              needs.push({ type: 'tbm', project: p });
+            }
+          }
+        });
+        return needs;
+      }
+
+      return (
+        <div className="max-w-[1600px] mx-auto p-4 space-y-4">
+          {/* TBM Allocation */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="p-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-700">TBM Allocation Matrix</h3>
+            </div>
+            <div className="overflow-x-auto gantt-container">
+              <table className="text-[11px]" style={{ minWidth: 200 + months.length * CELL_W }}>
+                <thead className="sticky top-0 z-10 bg-gray-100">
+                  <tr>
+                    <th className="text-left py-2 px-3 border-r border-gray-300 font-semibold text-gray-600 sticky left-0 bg-gray-100 z-20" style={{ minWidth: 200 }}>TBM Unit</th>
+                    {months.map((m, i) => (
+                      <th key={i} className={`py-2 px-1 border-r border-gray-200 text-center font-medium text-gray-500 ${m.getMonth() === 0 ? 'bg-gray-200' : ''}`}
+                        style={{ width: CELL_W, minWidth: CELL_W }}>
+                        {formatMonth(m)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {FLEET_TBMS.map((tbm, ri) => (
+                    <tr key={tbm.id} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                      <td className="py-1.5 px-3 border-r border-gray-300 font-medium text-gray-700 sticky left-0 z-10"
+                        style={{ minWidth: 200, backgroundColor: ri % 2 === 0 ? 'white' : '#f9fafb' }}>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TBM_COLORS[tbm.size].bg }}></span>
+                          <span className="truncate">{tbm.label}</span>
+                        </div>
+                      </td>
+                      {months.map((m, mi) => {
+                        const proj = getProjectForCell(tbmAssignments, tbm.id, m);
+                        return (
+                          <td key={mi} className="py-1 px-1 border-r border-gray-100 text-center" style={{ width: CELL_W }}>
+                            {proj ? (
+                              <div className="rounded px-1 py-0.5 text-white text-[10px] font-medium truncate"
+                                style={{ backgroundColor: TBM_COLORS[proj.tbm_size].bg, opacity: proj.secured ? 1 : 0.6 }}
+                                title={`${proj.id}: ${proj.name}`}>
+                                {proj.id}
+                              </div>
+                            ) : (
+                              <span className="text-green-400 text-[10px]">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  {/* Hire-in rows */}
+                  {[600, 1200, 1500, 1800].map(size => {
+                    const hasHire = months.some(m => {
+                      const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+                      return filtered.some(p => p.tbm_size === size && parseDate(p.start_date) <= monthEnd && parseDate(p.end_date) >= m &&
+                        projectAssignment[p.id]?.hireTbm);
+                    });
+                    if (!hasHire) return null;
+                    return (
+                      <tr key={`hire-${size}`} className="bg-red-50">
+                        <td className="py-1.5 px-3 border-r border-gray-300 font-bold text-red-600 sticky left-0 z-10 bg-red-50" style={{ minWidth: 200 }}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TBM_COLORS[size].bg }}></span>
+                            HIRE {size}mm
+                          </div>
+                        </td>
+                        {months.map((m, mi) => {
+                          const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+                          const hireProjects = filtered.filter(p =>
+                            p.tbm_size === size &&
+                            parseDate(p.start_date) <= monthEnd &&
+                            parseDate(p.end_date) >= m &&
+                            projectAssignment[p.id]?.hireTbm
+                          );
+                          return (
+                            <td key={mi} className="py-1 px-1 border-r border-gray-100 text-center" style={{ width: CELL_W }}>
+                              {hireProjects.length > 0 ? (
+                                <div className="bg-red-500 text-white rounded px-1 py-0.5 text-[10px] font-bold">
+                                  HIRE ({hireProjects.length})
+                                </div>
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Cabin Allocation */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="p-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-700">Control Cabin Allocation</h3>
+            </div>
+            <div className="overflow-x-auto gantt-container">
+              <table className="text-[11px]" style={{ minWidth: 200 + months.length * CELL_W }}>
+                <thead className="sticky top-0 z-10 bg-gray-100">
+                  <tr>
+                    <th className="text-left py-2 px-3 border-r border-gray-300 font-semibold text-gray-600 sticky left-0 bg-gray-100 z-20" style={{ minWidth: 200 }}>Cabin</th>
+                    {months.map((m, i) => (
+                      <th key={i} className={`py-2 px-1 border-r border-gray-200 text-center font-medium text-gray-500 ${m.getMonth() === 0 ? 'bg-gray-200' : ''}`}
+                        style={{ width: CELL_W, minWidth: CELL_W }}>
+                        {formatMonth(m)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {FLEET_CABINS.map((cab, ri) => (
+                    <tr key={cab.id} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                      <td className="py-1.5 px-3 border-r border-gray-300 font-medium text-gray-700 sticky left-0 z-10"
+                        style={{ minWidth: 200, backgroundColor: ri % 2 === 0 ? 'white' : '#f9fafb' }}>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-sm ${cab.type === 'digital' ? 'bg-purple-500' : 'bg-gray-400'}`}></span>
+                          <span>{cab.label}</span>
+                        </div>
+                      </td>
+                      {months.map((m, mi) => {
+                        const proj = getProjectForCell(cabinAssignments, cab.id, m);
+                        return (
+                          <td key={mi} className="py-1 px-1 border-r border-gray-100 text-center" style={{ width: CELL_W }}>
+                            {proj ? (
+                              <div className="rounded px-1 py-0.5 text-white text-[10px] font-medium truncate"
+                                style={{ backgroundColor: TBM_COLORS[proj.tbm_size].bg, opacity: proj.secured ? 1 : 0.6 }}
+                                title={`${proj.id}: ${proj.name}`}>
+                                {proj.id}
+                              </div>
+                            ) : (
+                              <span className="text-green-400 text-[10px]">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  {/* Cabin hire row */}
+                  {(() => {
+                    const hasCabinHire = months.some(m => {
+                      const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+                      return filtered.some(p =>
+                        parseDate(p.start_date) <= monthEnd &&
+                        parseDate(p.end_date) >= m &&
+                        projectAssignment[p.id]?.hireCabin
+                      );
+                    });
+                    if (!hasCabinHire) return null;
+                    return (
+                      <tr className="bg-red-50">
+                        <td className="py-1.5 px-3 border-r border-gray-300 font-bold text-red-600 sticky left-0 z-10 bg-red-50" style={{ minWidth: 200 }}>
+                          HIRE CABIN
+                        </td>
+                        {months.map((m, mi) => {
+                          const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+                          const hireProjects = filtered.filter(p =>
+                            parseDate(p.start_date) <= monthEnd &&
+                            parseDate(p.end_date) >= m &&
+                            projectAssignment[p.id]?.hireCabin
+                          );
+                          return (
+                            <td key={mi} className="py-1 px-1 border-r border-gray-100 text-center" style={{ width: CELL_W }}>
+                              {hireProjects.length > 0 ? (
+                                <div className="bg-red-500 text-white rounded px-1 py-0.5 text-[10px] font-bold">
+                                  HIRE ({hireProjects.length})
+                                </div>
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Hire Cost Summary */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-3">Hire-In Cost Estimate</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">Project</th>
+                    <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">TBM Size</th>
+                    <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">Duration</th>
+                    <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">Weekly Rate</th>
+                    <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">Est. Hire Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.filter(p => projectAssignment[p.id]?.hireTbm).map(p => {
+                    const weeks = Math.ceil(p.days / 7);
+                    const rate = HIRE_RATES_WEEKLY[p.tbm_size];
+                    const cost = weeks * rate;
+                    return (
+                      <tr key={p.id} className="border-b border-gray-100">
+                        <td className="py-1.5 px-2 text-xs">{p.id} — {p.name}</td>
+                        <td className="py-1.5 px-2">
+                          <span className="inline-flex items-center gap-1 text-xs">
+                            <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TBM_COLORS[p.tbm_size].bg }}></span>
+                            {p.tbm_size}mm
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2 mono text-xs">{weeks} weeks</td>
+                        <td className="py-1.5 px-2 mono text-xs">£{rate.toLocaleString()}</td>
+                        <td className="py-1.5 px-2 mono text-xs font-bold text-red-600">£{cost.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                  {filtered.filter(p => projectAssignment[p.id]?.hireTbm).length === 0 && (
+                    <tr><td colSpan="5" className="py-4 text-center text-green-600 text-sm">No hire-in required at current filter level</td></tr>
+                  )}
+                </tbody>
+                {filtered.filter(p => projectAssignment[p.id]?.hireTbm).length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300">
+                      <td colSpan="4" className="py-2 px-2 font-bold text-right text-sm">Total Estimated Hire Cost</td>
+                      <td className="py-2 px-2 mono font-bold text-red-600 text-sm">
+                        £{filtered
+                          .filter(p => projectAssignment[p.id]?.hireTbm)
+                          .reduce((sum, p) => sum + Math.ceil(p.days / 7) * HIRE_RATES_WEEKLY[p.tbm_size], 0)
+                          .toLocaleString()}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Main App ──
+    function App() {
+      const [activeTab, setActiveTab] = useState('Dashboard');
+      const [likelihoodFilter, setLikelihoodFilter] = useState(0);
+
+      return (
+        <div className="min-h-screen bg-gray-100">
+          <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+          <FilterBar likelihoodFilter={likelihoodFilter} setLikelihoodFilter={setLikelihoodFilter} />
+          {activeTab === 'Dashboard' && <DashboardTab projects={PROJECTS} likelihoodFilter={likelihoodFilter} />}
+          {activeTab === 'Timeline' && <TimelineTab projects={PROJECTS} likelihoodFilter={likelihoodFilter} />}
+          {activeTab === 'Map' && <MapTab projects={PROJECTS} likelihoodFilter={likelihoodFilter} />}
+          {activeTab === 'Resource Matrix' && <ResourceMatrixTab projects={PROJECTS} likelihoodFilter={likelihoodFilter} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
