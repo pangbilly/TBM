@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TBM Fleet Manager — Barhale</title>
+  <title>TBM Fleet Manager</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,11 +25,12 @@
       theme: {
         extend: {
           colors: {
-            barhale: '#f97316',
+            brand: '#f97316',
             tbm600: '#10b981',
             tbm1200: '#3b82f6',
             tbm1500: '#f59e0b',
             tbm1800: '#ef4444',
+            tbm2200: '#8b5cf6',
           }
         }
       }
@@ -45,7 +46,7 @@
     // DATA LAYER
     // ──────────────────────────────────────────────
 
-    const FLEET_OWNED = { 600: 4, 1200: 5, 1500: 3, 1800: 2 };
+    const FLEET_OWNED = { 600: 4, 1200: 5, 1500: 3, 1800: 2, 2200: 1 };
     const TOTAL_CABINS = 8;
 
     const TBM_COLORS = {
@@ -53,9 +54,10 @@
       1200: { bg: '#3b82f6', text: 'text-tbm1200', label: '1200mm' },
       1500: { bg: '#f59e0b', text: 'text-tbm1500', label: '1500mm' },
       1800: { bg: '#ef4444', text: 'text-tbm1800', label: '1800mm' },
+      2200: { bg: '#8b5cf6', text: 'text-tbm2200', label: '2200mm' },
     };
 
-    const HIRE_RATES_WEEKLY = { 600: 10200, 1200: 17850, 1500: 21400, 1800: 25100 };
+    const HIRE_RATES_WEEKLY = { 600: 10200, 1200: 17850, 1500: 21400, 1800: 25100, 2200: 31500 };
 
     const FLEET_TBMS = [
       { id: 'TBM-600-01', label: '600 Herrenknecht #1', size: 600, base: 'Birmingham' },
@@ -72,6 +74,7 @@
       { id: 'TBM-1500-03', label: '1500 NFM #1', size: 1500, base: 'Houston' },
       { id: 'TBM-1800-01', label: '1800 Herrenknecht #1', size: 1800, base: 'Bristol' },
       { id: 'TBM-1800-02', label: '1800 Robbins #1', size: 1800, base: 'Birmingham' },
+      { id: 'TBM-2200-01', label: '2200 Herrenknecht #1', size: 2200, base: 'Bristol' },
     ];
 
     const FLEET_CABINS = [
@@ -130,6 +133,10 @@
       { id: 'P2031', name: 'Digbeth Sewer - 140m', tbm_size: 1800, days: 38, start_date: '2028-05-08', end_date: '2028-06-25', likelihood: 45, secured: false, revenue_k: 1020, lat: 52.47, lng: -1.88, location: 'Central Birmingham' },
       { id: 'P2032', name: 'Keynsham Flood Relief - 270m', tbm_size: 1800, days: 330, start_date: '2029-03-26', end_date: '2030-06-18', likelihood: 35, secured: false, revenue_k: 8800, lat: 51.41, lng: -2.50, location: 'Bath & NE Somerset' },
       { id: 'P2033', name: 'Avon Gorge Interceptor PH2 - 11km', tbm_size: 1800, days: 870, start_date: '2029-05-21', end_date: '2032-11-02', likelihood: 40, secured: false, revenue_k: 30000, lat: 51.46, lng: -2.65, location: 'North Somerset' },
+      // 2200mm projects
+      { id: 'P2034', name: 'Severn Estuary Outfall - 1.8km', tbm_size: 2200, days: 180, start_date: '2027-06-14', end_date: '2028-01-18', likelihood: 35, secured: false, revenue_k: 6800, lat: 51.55, lng: -2.99, location: 'South Wales' },
+      { id: 'P2035', name: 'Mersey Gateway Tunnel - 2.4km', tbm_size: 2200, days: 260, start_date: '2028-02-07', end_date: '2028-12-18', likelihood: 25, secured: false, revenue_k: 11500, lat: 53.35, lng: -2.73, location: 'Merseyside' },
+      { id: 'P2036', name: 'Birmingham Deep Sewer - 3.2km', tbm_size: 2200, days: 400, start_date: '2029-01-08', end_date: '2030-05-22', likelihood: 15, secured: false, revenue_k: 18500, lat: 52.48, lng: -1.91, location: 'Central Birmingham' },
     ];
 
     // ──────────────────────────────────────────────
@@ -174,7 +181,7 @@
 
     function getDemandForMonth(projects, month, likelihoodFilter) {
       const active = projects.filter(p => p.likelihood >= likelihoodFilter && isActiveInMonth(p, month));
-      const demand = { 600: 0, 1200: 0, 1500: 0, 1800: 0 };
+      const demand = { 600: 0, 1200: 0, 1500: 0, 1800: 0, 2200: 0 };
       active.forEach(p => { demand[p.tbm_size]++; });
       return { demand, totalActive: active.length };
     }
@@ -303,10 +310,10 @@
           <div className="max-w-[1600px] mx-auto px-4">
             <div className="flex items-center justify-between h-14">
               <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-8 h-8 bg-barhale rounded flex items-center justify-center font-bold text-sm flex-shrink-0">B</div>
+                <div className="w-8 h-8 bg-brand rounded flex items-center justify-center font-bold text-sm flex-shrink-0">T</div>
                 <div className="hidden sm:block">
                   <h1 className="text-base font-bold leading-tight">TBM Fleet Manager</h1>
-                  <p className="text-[10px] text-gray-400 leading-tight">Barhale Tunnelling Division</p>
+                  <p className="text-[10px] text-gray-400 leading-tight">Tunnelling Fleet Division</p>
                 </div>
                 <h1 className="sm:hidden text-sm font-bold">TBM Fleet</h1>
               </div>
@@ -314,7 +321,7 @@
                 {tabs.map(tab => (
                   <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                     className={`px-2 sm:px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${
-                      activeTab === tab.key ? 'bg-barhale text-white' : 'text-gray-300 hover:bg-gray-700'
+                      activeTab === tab.key ? 'bg-brand text-white' : 'text-gray-300 hover:bg-gray-700'
                     }`}>
                     <span className="hidden sm:inline">{tab.key}</span>
                     <span className="sm:hidden">{tab.short}</span>
@@ -341,14 +348,14 @@
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Likelihood</span>
               <input type="range" min="0" max="100" value={likelihoodFilter}
                 onChange={e => setLikelihoodFilter(Number(e.target.value))}
-                className="w-28 sm:w-40 accent-barhale" />
+                className="w-28 sm:w-40 accent-brand" />
               <span className="mono text-sm font-bold text-gray-700 w-10">{likelihoodFilter}%</span>
               <div className="flex gap-1">
                 {presets.map(p => (
                   <button key={p.value} onClick={() => setLikelihoodFilter(p.value)}
                     className={`px-2 py-1 text-[10px] sm:text-xs rounded border transition-colors ${
                       likelihoodFilter === p.value
-                        ? 'bg-barhale text-white border-barhale'
+                        ? 'bg-brand text-white border-brand'
                         : 'bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100'
                     }`}>
                     <span className="hidden sm:inline">{p.label}</span>
@@ -400,15 +407,15 @@
       const weekLabel = `${weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — ${weekEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
       return (
-        <div className="bg-white rounded-lg border-2 border-barhale/30 p-3 space-y-2">
+        <div className="bg-white rounded-lg border-2 border-brand/30 p-3 space-y-2">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Viewing:</span>
-            <span className="mono text-sm font-bold text-barhale">{viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</span>
+            <span className="mono text-sm font-bold text-brand">{viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</span>
             <span className="text-xs text-gray-400">({weekLabel})</span>
             <input type="date" value={viewDate.toISOString().slice(0, 10)}
               min="2026-04-01" max="2031-01-01"
               onChange={e => { if (e.target.value) setViewDate(new Date(e.target.value + 'T00:00:00')); }}
-              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-barhale/50" />
+              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-brand/50" />
             <button onClick={() => setViewDate(new Date())}
               className="ml-1 px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded font-medium text-gray-600 transition-colors">
               Today
@@ -419,7 +426,7 @@
             <span className="text-[10px] text-gray-400 w-16">Apr 2026</span>
             <input type="range" min="0" max={TOTAL_WEEKS} value={weekIndex}
               onChange={onSliderChange}
-              className="flex-1 accent-barhale h-2" />
+              className="flex-1 accent-brand h-2" />
             <span className="text-[10px] text-gray-400 w-16 text-right">Jan 2031</span>
           </div>
           {/* Quick-jump month chips */}
@@ -430,7 +437,7 @@
                 <button key={i} onClick={() => setViewDate(new Date(q.date))}
                   className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
                     isSelected
-                      ? 'bg-barhale text-white border-barhale'
+                      ? 'bg-brand text-white border-brand'
                       : i === 0 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                       : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                   }`}>
@@ -514,7 +521,7 @@
                 Snapshot: {viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
               </h3>
               <div className="space-y-3">
-                <div className="flex justify-between"><span className="text-sm text-gray-600">Live Projects</span><span className="mono font-bold text-barhale">{active.length}</span></div>
+                <div className="flex justify-between"><span className="text-sm text-gray-600">Live Projects</span><span className="mono font-bold text-brand">{active.length}</span></div>
                 <div className="flex justify-between"><span className="text-sm text-gray-600">Starting within 30 days</span><span className="mono font-bold">{upcoming.length}</span></div>
                 <div className="flex justify-between"><span className="text-sm text-gray-600">Not yet started</span><span className="mono font-bold text-blue-600">{future.length}</span></div>
                 <div className="flex justify-between"><span className="text-sm text-gray-600">Completed by this date</span><span className="mono font-bold text-gray-400">{completed.length}</span></div>
@@ -794,11 +801,11 @@
         <div className="p-3 border-b border-gray-200 space-y-2">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Viewing:</span>
-            <span className="mono text-sm font-bold text-barhale">{viewDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+            <span className="mono text-sm font-bold text-brand">{viewDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
             <input type="date" value={viewDate.toISOString().slice(0, 10)}
               min="2026-04-01" max="2031-01-01"
               onChange={e => { if (e.target.value) setViewDate(new Date(e.target.value + 'T00:00:00')); }}
-              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-barhale/50" />
+              className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs mono focus:outline-none focus:ring-2 focus:ring-brand/50" />
             <button onClick={() => setViewDate(new Date())}
               className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded font-medium text-gray-600 transition-colors">
               Today
@@ -808,7 +815,7 @@
             <span className="text-[10px] text-gray-400 w-16">Apr 2026</span>
             <input type="range" min="0" max={TOTAL_WEEKS} value={weekIndex}
               onChange={onSliderChange}
-              className="flex-1 accent-barhale h-2" />
+              className="flex-1 accent-brand h-2" />
             <span className="text-[10px] text-gray-400 w-16 text-right">Jan 2031</span>
           </div>
           <div className="flex gap-1 flex-wrap">
@@ -817,7 +824,7 @@
               return (
                 <button key={i} onClick={() => setViewDate(new Date(q.date))}
                   className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
-                    isSelected ? 'bg-barhale text-white border-barhale'
+                    isSelected ? 'bg-brand text-white border-brand'
                     : i === 0 ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
                     : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                   }`}>
